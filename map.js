@@ -1,6 +1,10 @@
 import fireData from "./ressources/fire_data.json" assert { type: "json" };
 
-// const map = L.map("map").setView([10.046285, -13.796768], 15);
+// Load Sentinel data via WMS
+// Sentinel Hub WMS service
+// tiles generated using EPSG:3857 projection - Leaflet takes care of that
+let baseUrl =
+  "https://services.sentinel-hub.com/ogc/wms/427d2456-0839-45b3-b216-690847be1e42";
 
 const greenIcon = L.icon({
   iconUrl: "./ressources/icons/icons8-user-location-100.png",
@@ -11,6 +15,7 @@ const greenIcon = L.icon({
   shadowAnchor: [4, 62], // the same for the shadow
   popupAnchor: [-3, -76], // point from which the popup should open relative to the iconAnchor
 });
+
 // Add markers
 const waranya = L.marker([10.046285, -13.796768], {
   icon: greenIcon,
@@ -18,12 +23,27 @@ const waranya = L.marker([10.046285, -13.796768], {
 
 const cropFields = L.layerGroup([waranya]);
 
+// Load NASA fire point for Guinea
+const heatPoints = fireData.map((fd) => [
+  fd.latitude,
+  fd.longitude,
+  fd.bright_ti4,
+]);
+const firePoints = L.heatLayer(heatPoints, {
+  radius: 25,
+  //   gradient: { 0.4: "#f8961e", 0.65: "#6930c3", 1: "#f94144" },
+});
+
 const fields = {
   CropFields: cropFields,
+  // NDVI: sentinelHub,
+  FirePoints: firePoints,
 };
 
 // Map tiles
-const map = L.map("map").setView([10.268979, -10.977505], 7);
+// const map = L.map("map").setView([10.268979, -10.977505], 7);
+
+const map = L.map("map").setView([10.046285, -13.796768], 17);
 
 const openStreetMap = L.tileLayer(
   "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -34,18 +54,8 @@ const openStreetMap = L.tileLayer(
   }
 );
 
-const waterColor = L.tileLayer.provider("Stadia.StamenWatercolor");
-
 const googleSat = L.tileLayer(
   "http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
-  {
-    maxZoom: 20,
-    subdomains: ["mt0", "mt1", "mt2", "mt3"],
-  }
-);
-
-const googleTerrain = L.tileLayer(
-  "http://{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}",
   {
     maxZoom: 20,
     subdomains: ["mt0", "mt1", "mt2", "mt3"],
@@ -62,22 +72,14 @@ const stadiaDark = L.tileLayer.provider("Stadia.AlidadeSmoothDark", {
   opacity: 0.5,
 });
 
-// const jawgDark = L.tileLayer.provider("Jawg.Dark", {
-//     maxZoom: 20,
-// });
-
-// googleSat.addTo(map);
-// openStreetMap.addTo(map);
-stadiaDark.addTo(map);
+// add main map
+googleSat.addTo(map);
 
 const baseMaps = {
   EsriSatelite: esriSatelite,
   OpenStreetMap: openStreetMap,
-  Water: waterColor,
-  GoogleTerrain: googleTerrain,
   GoogleSat: googleSat,
   StadiaDark: stadiaDark,
-  // JawgDark: jawgDark
 };
 L.control.layers(baseMaps, fields).addTo(map);
 
@@ -98,17 +100,63 @@ map.addLayer(drawFeature);
 
 map.on("draw:created", (event) => {
   const { layer } = event;
-  console.log(layer.toGeoJSON());
+  const geoJson = layer.toGeoJSON();
+  console.log(geoJson);
   drawFeature.addLayer(layer);
+  let sentinelHub = L.tileLayer.wms(baseUrl, {
+    tileSize: 512,
+    attribution:
+      '&copy; <a href="http://www.sentinel-hub.com/" target="_blank">Sentinel Hub</a>',
+    urlProcessingApi:
+      "https://services.sentinel-hub.com/ogc/wms/1d4de4a3-2f50-493c-abd8-861dec3ae6b2",
+    maxcc: 20,
+    minZoom: 7,
+    maxZoom: 19,
+    format: "image/png",
+    preset: "NDVI",
+    layers: "NDVI",
+    resx: "10m",
+    resy: "10m",
+    transparent: "true",
+
+    // make sure that coordinates in the geometry parameter are in the same CRS that is set for the layer
+    crs: L.CRS.EPSG4326,
+    time: "2023-07-01/2024-01-01",
+    geometry: toWKT(layer),
+  });
+  drawFeature.addLayer(sentinelHub);
 });
 
-// Load NASA fire point for Guinea
-const heatPoints = fireData.map((fd) => [
-  fd.latitude,
-  fd.longitude,
-  fd.bright_ti4,
-]);
-var heat = L.heatLayer(heatPoints, {
-  radius: 25,
-  //   gradient: { 0.4: "#f8961e", 0.65: "#6930c3", 1: "#f94144" },
-}).addTo(map);
+function toWKT(layer) {
+  var lng,
+    lat,
+    coords = [];
+  if (layer instanceof L.Polygon || layer instanceof L.Polyline) {
+    var latlngs = layer.getLatLngs();
+    for (var i = 0; i < latlngs.length; i++) {
+      var latlngs1 = latlngs[i];
+      if (latlngs1.length) {
+        for (var j = 0; j < latlngs1.length; j++) {
+          coords.push(latlngs1[j].lng + " " + latlngs1[j].lat);
+          if (j === 0) {
+            lng = latlngs1[j].lng;
+            lat = latlngs1[j].lat;
+          }
+        }
+      } else {
+        coords.push(latlngs[i].lng + " " + latlngs[i].lat);
+        if (i === 0) {
+          lng = latlngs[i].lng;
+          lat = latlngs[i].lat;
+        }
+      }
+    }
+    if (layer instanceof L.Polygon) {
+      return "POLYGON((" + coords.join(",") + "," + lng + " " + lat + "))";
+    } else if (layer instanceof L.Polyline) {
+      return "LINESTRING(" + coords.join(",") + ")";
+    }
+  } else if (layer instanceof L.Marker) {
+    return "POINT(" + layer.getLatLng().lng + " " + layer.getLatLng().lat + ")";
+  }
+}
